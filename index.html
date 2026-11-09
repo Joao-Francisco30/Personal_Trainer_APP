@@ -43,8 +43,8 @@ button.d{background:none;border:0;color:var(--warn);cursor:pointer;font:inherit}
 <div id="root"></div>
 <script>
 // 1. Paste your own values from Supabase: Project Settings > API
-const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
+const SUPABASE_URL = 'https://ipizjlcvumqklfrgiyyq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tnWOcEUJF6C7xA0x90s3wQ_62gPDPem';
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = s => document.querySelector(s);
@@ -71,7 +71,7 @@ function loginView(msg = '') {
 
 function shell() {
   root.innerHTML = `<div class="app"><nav><b>PT Dashboard</b>
-    <button data-v="clients">Clients</button><button data-v="faq">FAQ</button><button data-v="videos">Video links</button>
+    <button data-v="clients">Clients</button><button data-v="templates">Templates</button><button data-v="exercises">Exercises</button><button data-v="faq">FAQ</button><button data-v="videos">Video links</button>
     <button class="out" id="out">Sign out</button></nav><main id="main"></main></div>`;
   document.querySelectorAll('nav [data-v]').forEach(b => b.onclick = () => { state.view = b.dataset.v; state.client = null; render(); });
   $('#out').onclick = async () => { await db.auth.signOut(); loginView(); };
@@ -81,6 +81,8 @@ function shell() {
 function render() {
   document.querySelectorAll('nav [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === state.view));
   if (state.view === 'clients') return state.client ? clientView() : clientsView();
+  if (state.view === 'templates') return templatesView();
+  if (state.view === 'exercises') return listEditor('exercises', 'Exercise library', [['name', 'Name'], ['muscle_group', 'Muscle group'], ['video_url', 'Demo video URL (optional)'], ['notes', 'Technique notes', 'area']], 'name');
   if (state.view === 'faq') return listEditor('faq', 'FAQ', [['question', 'Question'], ['answer', 'Answer', 'area']]);
   if (state.view === 'videos') return listEditor('video_links', 'Video links', [['title', 'Title'], ['url', 'YouTube URL'], ['description', 'Why it is useful', 'area']]);
 }
@@ -106,12 +108,12 @@ async function clientsView() {
 
 function clientView() {
   const c = state.client, m = $('#main');
-  const tabs = [['overview', 'Overview'], ['measurements', 'Measurements'], ['uploads', 'Photos & videos']];
+  const tabs = [['overview', 'Overview'], ['workouts', 'Workouts'], ['measurements', 'Measurements'], ['uploads', 'Photos & videos']];
   m.innerHTML = `<button class="s" id="back">Back to clients</button><h1 style="margin-top:14px">${esc(c.name)}</h1>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${state.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="tab"></div>`;
   $('#back').onclick = () => { state.client = null; render(); };
   m.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { state.tab = b.dataset.t; clientView(); });
-  ({ overview: overviewTab, measurements: measTab, uploads: uploadsTab })[state.tab](c, $('#tab'));
+  ({ overview: overviewTab, workouts: workoutsTab, measurements: measTab, uploads: uploadsTab })[state.tab](c, $('#tab'));
 }
 
 function overviewTab(c, el) {
@@ -119,7 +121,7 @@ function overviewTab(c, el) {
     <label>Goal<input id="g" value="${esc(c.goal)}"></label><label>Private notes<textarea id="no" rows="4">${esc(c.notes)}</textarea></label>
     <label><input type="checkbox" id="ac" style="width:auto" ${c.active ? 'checked' : ''}> Active client</label>
     <button class="p" id="save">Save changes</button> <span id="ok" class="mute"></span></div>
-    <p class="mute">Workout and meal plan builders are the next step.</p>`;
+    <p class="mute">Meal plan builder is the next step.</p>`;
   $('#save').onclick = async () => {
     const u = { name: $('#n').value, email: $('#e').value, phone: $('#ph').value, goal: $('#g').value, notes: $('#no').value, active: $('#ac').checked };
     const { error } = await db.from('clients').update(u).eq('id', c.id);
@@ -151,17 +153,87 @@ async function uploadsTab(c, el) {
   await db.from('media_uploads').update({ seen_by_pt: true }).eq('client_id', c.id).eq('seen_by_pt', false);
 }
 
-async function listEditor(table, title, fields) {
+async function listEditor(table, title, fields, order = 'position') {
   const m = $('#main'); m.innerHTML = `<h1>${title}</h1><p class="mute">Loading…</p>`;
-  const { data } = await db.from(table).select('*').order('position').order('id');
+  const { data } = await db.from(table).select('*').order(order);
   const input = (f, v = '') => `<label>${f[1]}${f[2] === 'area' ? `<textarea rows="3" data-f="${f[0]}">${esc(v)}</textarea>` : `<input data-f="${f[0]}" value="${esc(v)}">`}</label>`;
   m.innerHTML = `<h1>${title}</h1>
     ${(data || []).map(r => `<div class="card" data-id="${r.id}">${fields.map(f => input(f, r[f[0]])).join('')}<button class="p sv">Save changes</button> <button class="d rm">Delete</button></div>`).join('') || '<p class="mute">Nothing here yet. Add the first entry below.</p>'}
     <h2>Add new</h2><div class="card" id="new">${fields.map(f => input(f)).join('')}<button class="p" id="add">Add</button></div>`;
   const read = el => Object.fromEntries([...el.querySelectorAll('[data-f]')].map(i => [i.dataset.f, i.value]));
   m.querySelectorAll('.sv').forEach(b => b.onclick = async () => { const c = b.closest('.card'); await db.from(table).update(read(c)).eq('id', c.dataset.id); b.textContent = 'Saved'; });
-  m.querySelectorAll('.rm').forEach(b => b.onclick = async () => { if (confirm('Delete this entry?')) { await db.from(table).delete().eq('id', b.closest('.card').dataset.id); listEditor(table, title, fields); } });
-  $('#add').onclick = async () => { const r = read($('#new')); if (!r[fields[0][0]].trim()) return; r.position = (data?.length || 0); await db.from(table).insert(r); listEditor(table, title, fields); };
+  m.querySelectorAll('.rm').forEach(b => b.onclick = async () => { if (confirm('Delete this entry?')) { await db.from(table).delete().eq('id', b.closest('.card').dataset.id); listEditor(table, title, fields, order); } });
+  $('#add').onclick = async () => { const r = read($('#new')); if (!r[fields[0][0]].trim()) return; if (order === 'position') r.position = data?.length || 0; await db.from(table).insert(r); listEditor(table, title, fields, order); };
+}
+
+async function workoutsTab(c, el) {
+  const [{ data }, { data: tpl }] = await Promise.all([
+    db.from('workout_plans').select('*').eq('client_id', c.id).order('created_at', { ascending: false }),
+    db.from('workout_plans').select('id,title').eq('is_template', true).order('title')]);
+  el.innerHTML = `<div class="card"><table><tr><th>Plan</th><th>Created</th></tr>
+    ${(data || []).map(p => `<tr class="click" data-id="${p.id}"><td>${esc(p.title)}</td><td>${fmt(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="2" class="mute">No workout plans yet. Create the first one below.</td></tr>'}</table></div>
+    <h2>Assign from template</h2><div class="card">${tpl?.length ? `<label>Template<select id="tp">${tpl.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join('')}</select></label><button class="p" id="asg">Assign a copy to ${esc(c.name)}</button>` : '<span class="mute">No templates yet. Create one on the Templates page.</span>'}</div>
+    <h2>New workout plan</h2><div class="card"><label>Title<input id="pt" placeholder="Strength block, weeks 1-4"></label><button class="p" id="add">Create plan</button></div>`;
+  el.querySelectorAll('tr.click').forEach(r => r.onclick = () => planEditor(c, el, r.dataset.id));
+  if ($('#asg')) $('#asg').onclick = async () => {
+    const { data: nid, error } = await db.rpc('copy_workout_plan', { p_source: $('#tp').value, p_client: c.id, p_template: false });
+    error ? alert('Could not assign: ' + error.message) : planEditor(c, el, nid);
+  };
+  $('#add').onclick = async () => {
+    const t = $('#pt').value.trim(); if (!t) return;
+    const { data: p } = await db.from('workout_plans').insert({ client_id: c.id, title: t }).select().single();
+    planEditor(c, el, p.id);
+  };
+}
+
+async function planEditor(c, el, planId) {
+  const [{ data: plan }, { data: days }, { data: ex }] = await Promise.all([
+    db.from('workout_plans').select('*').eq('id', planId).single(),
+    db.from('workout_days').select('*, workout_items(*)').eq('plan_id', planId).order('position'),
+    db.from('exercises').select('id,name').order('name')]);
+  const exName = Object.fromEntries((ex || []).map(e => [e.id, e.name]));
+  const opts = (ex || []).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  const again = () => planEditor(c, el, planId);
+  el.innerHTML = `<button class="s" id="pb">Back</button> ${plan.is_template ? '' : '<button class="s" id="st">Save as template</button>'} <button class="d" id="pd">Delete plan</button>
+    <h2>${plan.is_template ? 'Template: ' : ''}${esc(plan.title)}</h2>${ex?.length ? '' : '<p class="err">Add exercises in the Exercises page first, then come back.</p>'}
+    ${(days || []).map(d => { const its = (d.workout_items || []).sort((a, b) => a.position - b.position); return `<div class="card" data-day="${d.id}">
+      <b>${esc(d.name)}</b> <button class="d dd">Delete day</button>
+      <table><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Rest (s)</th><th>Notes</th><th></th></tr>
+      ${its.map(i => `<tr><td>${esc(exName[i.exercise_id])}</td><td>${i.sets ?? ''}</td><td>${esc(i.reps)}</td><td>${i.rest_seconds ?? ''}</td><td>${esc(i.notes)}</td><td><button class="d di" data-i="${i.id}">Remove</button></td></tr>`).join('')}</table>
+      <div class="row" style="margin-top:12px"><label>Exercise<select class="x">${opts}</select></label><label>Sets<input class="s1" type="number"></label><label>Reps<input class="r1" placeholder="8-12"></label><label>Rest (s)<input class="t1" type="number"></label><label>Notes<input class="n1"></label></div>
+      <button class="p ai" data-n="${its.length}">Add exercise</button></div>`; }).join('') || '<p class="mute">No days yet. Add the first one below, for example Day A.</p>'}
+    <div class="card"><label>New day name<input id="dn" placeholder="Day A: upper body"></label><button class="p" id="ad">Add day</button></div>`;
+  const back = () => c ? workoutsTab(c, el) : templatesView();
+  $('#pb').onclick = back;
+  $('#pd').onclick = async () => { if (confirm('Delete this whole plan?')) { await db.from('workout_plans').delete().eq('id', planId); back(); } };
+  if ($('#st')) $('#st').onclick = async () => {
+    const t = prompt('Template name:', plan.title); if (!t) return;
+    const { error } = await db.rpc('copy_workout_plan', { p_source: planId, p_client: null, p_template: true, p_title: t });
+    alert(error ? 'Could not save: ' + error.message : 'Saved. Find it on the Templates page.');
+  };
+  $('#ad').onclick = async () => { const n = $('#dn').value.trim(); if (!n) return; await db.from('workout_days').insert({ plan_id: planId, name: n, position: days.length }); again(); };
+  el.querySelectorAll('.dd').forEach(b => b.onclick = async () => { if (confirm('Delete this day?')) { await db.from('workout_days').delete().eq('id', b.closest('.card').dataset.day); again(); } });
+  el.querySelectorAll('.di').forEach(b => b.onclick = async () => { await db.from('workout_items').delete().eq('id', b.dataset.i); again(); });
+  el.querySelectorAll('.ai').forEach(b => b.onclick = async () => {
+    const k = b.closest('.card'), q = s => k.querySelector(s).value; if (!q('.x')) return;
+    await db.from('workout_items').insert({ day_id: k.dataset.day, exercise_id: q('.x'), sets: q('.s1') || null, reps: q('.r1'), rest_seconds: q('.t1') || null, notes: q('.n1'), position: +b.dataset.n });
+    again();
+  });
+}
+
+async function templatesView() {
+  const m = $('#main');
+  const { data } = await db.from('workout_plans').select('*').eq('is_template', true).order('title');
+  m.innerHTML = `<h1>Templates</h1><h2>Workout templates</h2><div class="card"><table><tr><th>Name</th><th>Created</th></tr>
+    ${(data || []).map(p => `<tr class="click" data-id="${p.id}"><td>${esc(p.title)}</td><td>${fmt(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="2" class="mute">No templates yet.</td></tr>'}</table></div>
+    <div class="card"><label>New workout template<input id="tt" placeholder="Beginner full body, 3 days"></label><button class="p" id="add">Create template</button></div>
+    <p class="mute">Meal plan templates will appear here once the meal plan builder is added.</p>`;
+  m.querySelectorAll('tr.click').forEach(r => r.onclick = () => planEditor(null, m, r.dataset.id));
+  $('#add').onclick = async () => {
+    const t = $('#tt').value.trim(); if (!t) return;
+    const { data: p } = await db.from('workout_plans').insert({ title: t, is_template: true }).select().single();
+    planEditor(null, m, p.id);
+  };
 }
 
 init();
