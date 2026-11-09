@@ -43,8 +43,8 @@ button.d{background:none;border:0;color:var(--warn);cursor:pointer;font:inherit}
 <div id="root"></div>
 <script>
 // 1. Paste your own values from Supabase: Project Settings > API
-const SUPABASE_URL = 'https://ipizjlcvumqklfrgiyyq.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_tnWOcEUJF6C7xA0x90s3wQ_62gPDPem';
+const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = s => document.querySelector(s);
@@ -108,20 +108,19 @@ async function clientsView() {
 
 function clientView() {
   const c = state.client, m = $('#main');
-  const tabs = [['overview', 'Overview'], ['workouts', 'Workouts'], ['measurements', 'Measurements'], ['uploads', 'Photos & videos']];
+  const tabs = [['overview', 'Overview'], ['workouts', 'Workouts'], ['meals', 'Meals'], ['measurements', 'Measurements'], ['uploads', 'Photos & videos']];
   m.innerHTML = `<button class="s" id="back">Back to clients</button><h1 style="margin-top:14px">${esc(c.name)}</h1>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${state.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="tab"></div>`;
   $('#back').onclick = () => { state.client = null; render(); };
   m.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { state.tab = b.dataset.t; clientView(); });
-  ({ overview: overviewTab, workouts: workoutsTab, measurements: measTab, uploads: uploadsTab })[state.tab](c, $('#tab'));
+  ({ overview: overviewTab, workouts: workoutsTab, meals: mealsTab, measurements: measTab, uploads: uploadsTab })[state.tab](c, $('#tab'));
 }
 
 function overviewTab(c, el) {
   el.innerHTML = `<div class="card"><div class="row"><label>Name<input id="n" value="${esc(c.name)}"></label><label>Email<input id="e" value="${esc(c.email)}"></label><label>Phone<input id="ph" value="${esc(c.phone)}"></label></div>
     <label>Goal<input id="g" value="${esc(c.goal)}"></label><label>Private notes<textarea id="no" rows="4">${esc(c.notes)}</textarea></label>
     <label><input type="checkbox" id="ac" style="width:auto" ${c.active ? 'checked' : ''}> Active client</label>
-    <button class="p" id="save">Save changes</button> <span id="ok" class="mute"></span></div>
-    <p class="mute">Meal plan builder is the next step.</p>`;
+    <button class="p" id="save">Save changes</button> <span id="ok" class="mute"></span></div>`;
   $('#save').onclick = async () => {
     const u = { name: $('#n').value, email: $('#e').value, phone: $('#ph').value, goal: $('#g').value, notes: $('#no').value, active: $('#ac').checked };
     const { error } = await db.from('clients').update(u).eq('id', c.id);
@@ -221,19 +220,82 @@ async function planEditor(c, el, planId) {
   });
 }
 
+async function mealsTab(c, el) {
+  const [{ data }, { data: tpl }] = await Promise.all([
+    db.from('meal_plans').select('*').eq('client_id', c.id).order('created_at', { ascending: false }),
+    db.from('meal_plans').select('id,title').eq('is_template', true).order('title')]);
+  el.innerHTML = `<div class="card"><table><tr><th>Plan</th><th>Created</th></tr>
+    ${(data || []).map(p => `<tr class="click" data-id="${p.id}"><td>${esc(p.title)}</td><td>${fmt(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="2" class="mute">No meal plans yet. Create the first one below.</td></tr>'}</table></div>
+    <h2>Assign from template</h2><div class="card">${tpl?.length ? `<label>Template<select id="tp">${tpl.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join('')}</select></label><button class="p" id="asg">Assign a copy to ${esc(c.name)}</button>` : '<span class="mute">No meal templates yet. Create one on the Templates page.</span>'}</div>
+    <h2>New meal plan</h2><div class="card"><label>Title<input id="pt" placeholder="Cutting diet, 2000 kcal"></label><button class="p" id="add">Create plan</button></div>`;
+  el.querySelectorAll('tr.click').forEach(r => r.onclick = () => mealEditor(c, el, r.dataset.id));
+  if ($('#asg')) $('#asg').onclick = async () => {
+    const { data: nid, error } = await db.rpc('copy_meal_plan', { p_source: $('#tp').value, p_client: c.id, p_template: false });
+    error ? alert('Could not assign: ' + error.message) : mealEditor(c, el, nid);
+  };
+  $('#add').onclick = async () => {
+    const t = $('#pt').value.trim(); if (!t) return;
+    const { data: p } = await db.from('meal_plans').insert({ client_id: c.id, title: t }).select().single();
+    mealEditor(c, el, p.id);
+  };
+}
+
+async function mealEditor(c, el, planId) {
+  const [{ data: plan }, { data: meals }] = await Promise.all([
+    db.from('meal_plans').select('*').eq('id', planId).single(),
+    db.from('meals').select('*, meal_items(*)').eq('plan_id', planId).order('position')]);
+  const again = () => mealEditor(c, el, planId);
+  const num = v => v === '' ? null : +v;
+  const mac = m => [m.calories != null && m.calories + ' kcal', m.protein_g != null && m.protein_g + 'g protein', m.carbs_g != null && m.carbs_g + 'g carbs', m.fat_g != null && m.fat_g + 'g fat'].filter(Boolean).join(' · ');
+  el.innerHTML = `<button class="s" id="pb">Back</button> ${plan.is_template ? '' : '<button class="s" id="st">Save as template</button>'} <button class="d" id="pd">Delete plan</button>
+    <h2>${plan.is_template ? 'Template: ' : ''}${esc(plan.title)}</h2>
+    ${(meals || []).map(m => { const its = (m.meal_items || []).sort((a, b) => a.position - b.position); return `<div class="card" data-meal="${m.id}">
+      <b>${esc(m.name)}</b> <span class="mute">${esc(m.time_of_day)} ${mac(m)}</span> <button class="d dm">Delete meal</button>
+      <table><tr><th>Food</th><th>Quantity</th><th>Notes</th><th></th></tr>
+      ${its.map(i => `<tr><td>${esc(i.food)}</td><td>${esc(i.quantity)}</td><td>${esc(i.notes)}</td><td><button class="d dfi" data-i="${i.id}">Remove</button></td></tr>`).join('')}</table>
+      <div class="row" style="margin-top:12px"><label>Food<input class="f1"></label><label>Quantity<input class="q1" placeholder="150 g"></label><label>Notes<input class="n1"></label></div>
+      <button class="p af" data-n="${its.length}">Add food</button></div>`; }).join('') || '<p class="mute">No meals yet. Add the first one below, for example Breakfast.</p>'}
+    <h2>Add meal</h2><div class="card"><div class="row"><label>Name<input id="mn" placeholder="Breakfast"></label><label>Time<input id="mt" placeholder="08:00"></label><label>Calories<input id="mk" type="number"></label><label>Protein (g)<input id="mp" type="number"></label><label>Carbs (g)<input id="mc" type="number"></label><label>Fat (g)<input id="mf" type="number"></label></div>
+    <button class="p" id="am">Add meal</button></div>`;
+  const back = () => c ? mealsTab(c, el) : templatesView();
+  $('#pb').onclick = back;
+  $('#pd').onclick = async () => { if (confirm('Delete this whole plan?')) { await db.from('meal_plans').delete().eq('id', planId); back(); } };
+  if ($('#st')) $('#st').onclick = async () => {
+    const t = prompt('Template name:', plan.title); if (!t) return;
+    const { error } = await db.rpc('copy_meal_plan', { p_source: planId, p_client: null, p_template: true, p_title: t });
+    alert(error ? 'Could not save: ' + error.message : 'Saved. Find it on the Templates page.');
+  };
+  $('#am').onclick = async () => {
+    const n = $('#mn').value.trim(); if (!n) return;
+    await db.from('meals').insert({ plan_id: planId, name: n, time_of_day: $('#mt').value, calories: num($('#mk').value), protein_g: num($('#mp').value), carbs_g: num($('#mc').value), fat_g: num($('#mf').value), position: meals.length });
+    again();
+  };
+  el.querySelectorAll('.dm').forEach(b => b.onclick = async () => { if (confirm('Delete this meal?')) { await db.from('meals').delete().eq('id', b.closest('.card').dataset.meal); again(); } });
+  el.querySelectorAll('.dfi').forEach(b => b.onclick = async () => { await db.from('meal_items').delete().eq('id', b.dataset.i); again(); });
+  el.querySelectorAll('.af').forEach(b => b.onclick = async () => {
+    const k = b.closest('.card'), q = x => k.querySelector(x).value; if (!q('.f1').trim()) return;
+    await db.from('meal_items').insert({ meal_id: k.dataset.meal, food: q('.f1'), quantity: q('.q1'), notes: q('.n1'), position: +b.dataset.n });
+    again();
+  });
+}
+
 async function templatesView() {
   const m = $('#main');
-  const { data } = await db.from('workout_plans').select('*').eq('is_template', true).order('title');
-  m.innerHTML = `<h1>Templates</h1><h2>Workout templates</h2><div class="card"><table><tr><th>Name</th><th>Created</th></tr>
-    ${(data || []).map(p => `<tr class="click" data-id="${p.id}"><td>${esc(p.title)}</td><td>${fmt(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="2" class="mute">No templates yet.</td></tr>'}</table></div>
-    <div class="card"><label>New workout template<input id="tt" placeholder="Beginner full body, 3 days"></label><button class="p" id="add">Create template</button></div>
-    <p class="mute">Meal plan templates will appear here once the meal plan builder is added.</p>`;
-  m.querySelectorAll('tr.click').forEach(r => r.onclick = () => planEditor(null, m, r.dataset.id));
-  $('#add').onclick = async () => {
-    const t = $('#tt').value.trim(); if (!t) return;
-    const { data: p } = await db.from('workout_plans').insert({ title: t, is_template: true }).select().single();
-    planEditor(null, m, p.id);
+  const [{ data: w }, { data: ml }] = await Promise.all([
+    db.from('workout_plans').select('*').eq('is_template', true).order('title'),
+    db.from('meal_plans').select('*').eq('is_template', true).order('title')]);
+  const tbl = (rows, k) => `<div class="card"><table><tr><th>Name</th><th>Created</th></tr>${(rows || []).map(p => `<tr class="click" data-k="${k}" data-id="${p.id}"><td>${esc(p.title)}</td><td>${fmt(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="2" class="mute">No templates yet.</td></tr>'}</table></div>`;
+  m.innerHTML = `<h1>Templates</h1><h2>Workout templates</h2>${tbl(w, 'w')}
+    <div class="card"><label>New workout template<input id="tt" placeholder="Full body, 3 days"></label><button class="p" id="add">Create workout template</button></div>
+    <h2>Meal plan templates</h2>${tbl(ml, 'm')}
+    <div class="card"><label>New meal plan template<input id="tm" placeholder="Maintenance, 2500 kcal"></label><button class="p" id="addm">Create meal template</button></div>`;
+  m.querySelectorAll('tr.click').forEach(r => r.onclick = () => (r.dataset.k === 'w' ? planEditor : mealEditor)(null, m, r.dataset.id));
+  const mk = (btn, input, table, editor) => $(btn).onclick = async () => {
+    const t = $(input).value.trim(); if (!t) return;
+    const { data: p } = await db.from(table).insert({ title: t, is_template: true }).select().single();
+    editor(null, m, p.id);
   };
+  mk('#add', '#tt', 'workout_plans', planEditor); mk('#addm', '#tm', 'meal_plans', mealEditor);
 }
 
 init();
